@@ -1,4 +1,9 @@
 import asyncio
+try:
+    asyncio.get_event_loop()
+except RuntimeError:
+    loop = asyncio.new_event_loop()
+    asyncio.set_event_loop(loop)
 import json
 import os
 import re
@@ -637,11 +642,6 @@ async def main():
         await asyncio.Event().wait()
 
 if __name__ == "__main__":
-    try:
-        loop = asyncio.get_event_loop()
-    except RuntimeError:
-        loop = asyncio.new_event_loop()
-        asyncio.set_event_loop(loop)
-        
+    
     loop.run_until_complete(main())
 
