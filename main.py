@@ -275,36 +275,41 @@ async def get_post_by_topics_async(channel, keywords):
     return None
 
 async def cron_checker():
-    now = datetime.now().strftime("%H:%M")
-    settings = load_json(SETTINGS_FILE)
-    
-    for user_id, config in settings.items():
-        user_times = config.get("times", [])
-        if now in user_times:
-            target_chat = config.get("target_chat")
-            source_channel = config.get("source_channel")
-            keywords = config.get("keywords", [])
+    print("⏰ Arxiv postlarni tekshirish boshlandi...")
+    try:
+        # TARGET_CHANNEL - sizning kanalingiz user_name yoki ID si
+        # SOURCE_CHANNELS - manba kanallar ro'yxati (masalan, ["annuvr", "oqivaqotaril"])
+        
+        # Manba kanallardan birini tasodifiy tanlaymiz
+        source_chat = random.choice(SOURCE_CHANNELS)
+        
+        posts = []
+        # get_chat_history orqali oxirgi 200 ta yoki undan ham ko'proq eski postlarni olamiz
+        async for message in app.get_chat_history(source_chat, limit=200):
+            # Faqat matnli yoki rasm/video tagida matni bor postlarni ajratamiz
+            if message.text or message.caption:
+                # Stop word (reklama) filtri (agar kodingizda bo'lsa)
+                text = message.text or message.caption
+                if not any(word in text.lower() for word in STOP_WORDS):
+                    posts.append(message)
+        
+        if posts:
+            # Olingan eski postlar ichidan bittasini tasodifiy tanlaymiz 
+            # (bu 1 hafta yoki 1 oy oldingi post bo'lishi ham mumkin)
+            chosen_post = random.choice(posts)
             
-            if not target_chat or not source_channel:
-                continue
+            # Postni o'zingizning kanalingizga nusxalaymiz (forward emas, yangidek yuborish)
+            if chosen_post.text:
+                await app.send_message(TARGET_CHANNEL, chosen_post.text)
+            elif chosen_post.caption:
+                await chosen_post.copy(TARGET_CHANNEL)
                 
-            content = await get_post_by_topics_async(source_channel, keywords)
-            if content:
-                # 🕊️ TELEGRAM UCHUN ENGO'ZAL VA GO'ZAL DIZAYNDAGI XABAR SHABLONI
-                formatted_text = (
-                    f"📖 **Ma'rifat Ulashuvchi Kontent**\n"
-                    f"┄┄┄┄┄┄┄┄┄┄┄┄┄┄┄┄┄┄┄┄┄┄┄┄┄\n\n"
-                    f"{content}\n\n"
-                    f"┄┄┄┄┄┄┄┄┄┄┄┄┄┄┄┄┄┄┄┄┄┄┄┄┄\n"
-                    f"✍️ **Manba:** {source_channel}\n"
-                    f"📚 **Iqro Avto-Post Tizimi** 🕊️"
-                )
-                try:
-                    await app.send_message(target_chat, formatted_text, parse_mode=ParseMode.MARKDOWN)
-                except errors.TelegramAPIError as e:
-                    print(f"❌ Kanalga post yuborishda xato ({target_chat}): {e}")
-
-@app.on_message(filters.command(["start", "help", "savol", "taklif", "privacy"]) & filters.private)
+            print(style_result(f"✅ Eski post muvaffaqiyatli yuborildi! (Manba: @{source_chat})"))
+        else:
+            print("⚠️ Manba kanallardan mos keladigan eski post topilmadi.")
+            
+    except Exception as e:
+        print(f"❌ Arxiv post yuborishda xatolik: {e}")
 async def commands_handler(client, message):
     user_id = str(message.from_user.id)
     cmd = message.command[0] if message.command else "start"
