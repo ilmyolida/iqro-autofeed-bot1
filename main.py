@@ -1,10 +1,11 @@
 import asyncio
-import random 
+
 try:
     asyncio.get_event_loop()
 except RuntimeError:
     loop = asyncio.new_event_loop()
     asyncio.set_event_loop(loop)
+import random
 import json
 import os
 import re
@@ -276,41 +277,76 @@ async def get_post_by_topics_async(channel, keywords):
     return None
 
 async def cron_checker():
-    print("⏰ Arxiv postlarni tekshirish boshlandi...")
-    try:
-        # TARGET_CHANNEL - sizning kanalingiz user_name yoki ID si
-        # SOURCE_CHANNELS - manba kanallar ro'yxati (masalan, ["annuvr", "oqivaqotaril"])
+    print("⏰ Arxiv va eski postlarni saralash tizimi ishga tushdi...")
+    settings = load_json(SETTINGS_FILE)
+    now = datetime.now().strftime("%H:%M")
+    
+    for user_id, config in settings.items():
+        user_times = config.get("times", [])
         
-        # Manba kanallardan birini tasodifiy tanlaymiz
-        source_chat = random.choice(SOURCE_CHANNELS)
-        
-        posts = []
-        # get_chat_history orqali oxirgi 200 ta yoki undan ham ko'proq eski postlarni olamiz
-        async for message in app.get_chat_history(source_chat, limit=200):
-            # Faqat matnli yoki rasm/video tagida matni bor postlarni ajratamiz
-            if message.text or message.caption:
-                # Stop word (reklama) filtri (agar kodingizda bo'lsa)
-                text = message.text or message.caption
-                if not any(word in text.lower() for word in STOP_WORDS):
-                    posts.append(message)
-        
-        if posts:
-            # Olingan eski postlar ichidan bittasini tasodifiy tanlaymiz 
-            # (bu 1 hafta yoki 1 oy oldingi post bo'lishi ham mumkin)
-            chosen_post = random.choice(posts)
+        # Vaqtini tekshiramiz
+        if now in user_times:
+            target_chat = config.get("target_chat")
+            source_channel = config.get("source_channel")
+            keywords = config.get("keywords", [])
             
-            # Postni o'zingizning kanalingizga nusxalaymiz (forward emas, yangidek yuborish)
-            if chosen_post.text:
-                await app.send_message(TARGET_CHANNEL, chosen_post.text)
-            elif chosen_post.caption:
-                await chosen_post.copy(TARGET_CHANNEL)
+            if not target_chat or not source_channel:
+                continue
+            
+            # Username formatini to'g'rilaymiz (@ belgisini olib tashlaymiz agar bo'lsa)
+            clean_source = source_channel.replace("@", "").strip()
+            
+            try:
+                print(f"📦 @{clean_source} kanalidan arxiv postlar yuklanyapti...")
+                posts = []
                 
-            print(style_result(f"✅ Eski post muvaffaqiyatli yuborildi! (Manba: @{source_chat})"))
-        else:
-            print("⚠️ Manba kanallardan mos keladigan eski post topilmadi.")
-            
-    except Exception as e:
-        print(f"❌ Arxiv post yuborishda xatolik: {e}")
+                # 'limit=300' qilish orqali oxirgi 300 ta postni (taxminan 1 oylik arxivni) olamiz
+                async for message in app.get_chat_history(clean_source, limit=300):
+                    # Faqat matni bor yoki rasm tagida matni bor xabarlarni olamiz
+                    text = message.text or message.caption
+                    
+                    if text and len(text) > 15:
+                        # Reklama (Stop-words) filtri
+                        if any(word in text.lower() for word in STOP_WORDS):
+                            continue
+                            
+                        # Agar mavzu (keyword) tanlangan bo'lsa, mos kelishini tekshiramiz
+                        if keywords:
+                            if any(kw.lower() in text.lower() for kw in keywords):
+                                posts.append(text)
+                        else:
+                            posts.append(text)
+                
+                # Agar arxivdan postlar topilsa, bittasini tasodifiy (random) tanlaymiz
+                if posts:
+                    chosen_content = random.choice(posts)
+                    
+                    # ✨ SIZ AYTGANDEK TELEGRAMDA JUDA GO'ZAL VA CHIROYLI DIZAYNDA CHIQADIGAN SHABLON
+                    formatted_text = (
+                        f"📖 **Ma'rifat Ulashuvchi Kontent**\n"
+                        f"┄┄┄┄┄┄┄┄┄┄┄┄┄┄┄┄┄┄┄┄┄┄┄┄┄\n\n"
+                        f"{chosen_content}\n\n"
+                        f"┄┄┄┄┄┄┄┄┄┄┄┄┄┄┄┄┄┄┄┄┄┄┄┄┄\n"
+                        f"✍️ **Manba:** @{clean_source}\n"
+                        f"📚 **Iqro Avto-Post Tizimi** 🕊️"
+                    )
+                    
+                    # O'zingizning kanalingizga yuborish
+                    await app.send_message(target_chat, formatted_text, parse_mode=ParseMode.MARKDOWN)
+                    print(f"✅ Arxiv post muvaffaqiyatli yuborildi: {target_chat}")
+                else:
+                    print(f"⚠️ Arxivdan mos keladigan kontent topilmadi: @{clean_source}")
+                    
+            except errors.FloodWait as e:
+                # Telegram cheklov qo'ymasligi uchun himoya
+                print(f"⏳ Telegram FloodWait: {e.value} soniya kutilmoqda...")
+                await asyncio.sleep(e.value)
+            except Exception as e:
+                print(f"❌ Arxiv postni olishda yoki yuborishda xato: {e}")
+                
+
+
+
 async def commands_handler(client, message):
     user_id = str(message.from_user.id)
     cmd = message.command[0] if message.command else "start"
