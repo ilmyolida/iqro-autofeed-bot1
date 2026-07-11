@@ -1,10 +1,5 @@
-import asyncio
 
-try:
-    asyncio.get_event_loop()
-except RuntimeError:
-    loop = asyncio.new_event_loop()
-    asyncio.set_event_loop(loop)
+import asyncio
 import random
 import json
 import os
@@ -23,13 +18,13 @@ from datetime import datetime
 
 # Event Loop xavfsizligini ta'minlash
 try:
-    asyncio.get_running_loop()
+    asyncio.get_event_loop()
 except RuntimeError:
     loop = asyncio.new_event_loop()
     asyncio.set_event_loop(loop)
 
 # 🔐 ASOSIY PARAMETRLAR
-BOT_TOKEN = "8099815200:AAH05Qa5PiHbhdC54UdZiLMf0dNeRt4ETwQ"
+# DIQQAT: Userbot ishlashi uchun bot_token olib tashlandi
 API_ID = 33118317
 API_HASH = "53aae636122c27a99a6c211ecc5d0c68"
 REQUIRED_CHANNEL = "oqivaqotaril"
@@ -37,9 +32,7 @@ REQUIRED_CHANNEL = "oqivaqotaril"
 app = Client(
     "iqro_premium_bot",
     api_id=API_ID,
-    api_hash=API_HASH,
-    bot_token=BOT_TOKEN,
-    in_memory=True
+    api_hash=API_HASH
 )
 scheduler = AsyncIOScheduler()
 
@@ -106,7 +99,7 @@ TEXTS = {
         "invalid_time": "❌ Vaqt formati xato. Iltimos, na'munadagidek kiriting: `09:30` yoki `12:00, 18:45`"
     },
     "uz_kir": {
-        "about": "✨ **'Iqro Pro Ultra' Премиум Авто-Пост Тизими**\n\n📜 **Тизим имкониятлари:**\n» Манба каналларидан энг сара постларни саралайди.\n» Белгиланган мавзулар бўйича филтрлайди.\n» Каналингизга автоматик равишda тайёрланган постларни жойлайди.\n\n⚙️ *Созлашни бошлаш учун қуйидаги тугмани босинг:*",
+        "about": "✨ **'Iqro Pro Ultra' Премиум Авто-Пост Тизими**\n\n📜 **Тизим imkoniyatlari:**\n» Манба каналларидан энг сара постларни саралайди.\n» Белгиланган мавзулар бўйича филтрлайди.\n» Каналингизга автоматик равишda тайёрланган постларни жойлайди.\n\n⚙️ *Созлашни бошлаш учун қуйидаги тугмани босинг:*",
         "sub_req": "👋 Ботдан тўлиқ фойдаланиш ва созлаш учун аввал расмий каналимизга аъзо бўлинг:",
         "sub_btn": "📢 Каналга Обуна Бўлиш",
         "verify_btn": "✅ Обунани Тасдиқлаш",
@@ -132,7 +125,7 @@ TEXTS = {
         "menu_lang": "🌐 Тил (Language)",
         "privacy_text": "🔒 **Махфийлик Сиёсати:**\n\n1. Сизнинг созламаларингиз хавфсиз ва махфий сақланади.\n2. Бот фақат сиз рухсат берган каналларда хизмат кўрсатади.\n3. Шахсий маълумотлар учинчи шахсларга берилмайди.",
         "about_text": "🤖 **Iqro Pro Ultra Бот:**\n\nКаналларни энг сифатли ва сараланган исломий ҳамда маърифий контентлар билан автоматик тўлдириб борувчи ёрдамчи.\n\n📢 Канал: @oqivaqotaril",
-        "help_text": "🆘 **Тезкор Ёрдам:**\n\n❓ **Бот каналга пост ташламаяпти?**\n- Ботни ўзингизнинг каналингизга **Админ** қилиб қўшганингизга ва пост жойлаш ҳуқуқини берганингизга ишонч ҳосил қилинг.\n\n❓ **Қўлда вақт киритиш қандай?**\n- '✍️ Ўзим ваqt киритаман' тугмасини босиб, `07:15, 14:30` кўринишида ёзинг.",
+        "help_text": "🆘 **Тезкор Ёрдам:**\n\n❓ **Бот каналга пост ташламаяпти?**\n- Ботни ўзингизнинг каналингизга **Админ** қилиб қўшганингизга ва пост жойлаш ҳуқуқини берганингизга ишонч ҳосил қилинг.\n\n❓ **Қўлда вақт киритиш qanday?**\n- '✍️ Ўзим ваqt киритаман' тугмасини босиб, `07:15, 14:30` кўринишида ёзинг.",
         "ask_question": "💬 **Саволингизни матн шаклида юборинг:**\n*Мутахассисларимиз тез орада жавоб беришади.*",
         "ask_suggestion": "💡 **Лойиҳа сифатини ошириш учун таклифингизни ёзинг:**",
         "thanks_feedback": "✅ Раҳмат! Мурожаатингиз муваффақиятли қабул қилинди.",
@@ -248,34 +241,6 @@ def get_reply_keyboard(lang):
 
 STOP_WORDS = ["http://", "https://", "t.me/", "tg.me", "reklama", "aksiya", "chegirma", "tanlov", "homiy", "click", "payme"]
 
-def is_ad(text):
-    return any(word in text.lower() for word in STOP_WORDS)
-
-async def get_post_by_topics_async(channel, keywords):
-    chan_username = channel.replace("@", "").strip()
-    url = f"https://t.me/s/{chan_username}"
-    headers = {'User-Agent': 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36'}
-    
-    try:
-        async with httpx.AsyncClient(headers=headers, timeout=10.0) as client:
-            res = await client.get(url)
-            if res.status_code == 200:
-                soup = BeautifulSoup(res.text, 'html.parser')
-                msgs = soup.find_all('div', class_='tgme_widget_message_text')
-                for msg in reversed(msgs):
-                    for br in msg.find_all('br'):
-                        br.replace_with('\n')
-                    text = msg.get_text().strip()
-                    if len(text) > 15 and not is_ad(text):
-                        if keywords:
-                            if any(word.lower() in text.lower() for word in keywords):
-                                return text
-                        else:
-                            return text
-    except Exception as e:
-        print(f"🌐 Skraping xatoligi ({channel}): {e}")
-    return None
-
 async def cron_checker():
     print("⏰ Arxiv va eski postlarni saralash tizimi ishga tushdi...")
     settings = load_json(SETTINGS_FILE)
@@ -284,7 +249,6 @@ async def cron_checker():
     for user_id, config in settings.items():
         user_times = config.get("times", [])
         
-        # Vaqtini tekshiramiz
         if now in user_times:
             target_chat = config.get("target_chat")
             source_channel = config.get("source_channel")
@@ -293,35 +257,28 @@ async def cron_checker():
             if not target_chat or not source_channel:
                 continue
             
-            # Username formatini to'g'rilaymiz (@ belgisini olib tashlaymiz agar bo'lsa)
             clean_source = source_channel.replace("@", "").strip()
             
             try:
                 print(f"📦 @{clean_source} kanalidan arxiv postlar yuklanyapti...")
                 posts = []
                 
-                # 'limit=300' qilish orqali oxirgi 300 ta postni (taxminan 1 oylik arxivni) olamiz
                 async for message in app.get_chat_history(clean_source, limit=300):
-                    # Faqat matni bor yoki rasm tagida matni bor xabarlarni olamiz
                     text = message.text or message.caption
                     
                     if text and len(text) > 15:
-                        # Reklama (Stop-words) filtri
                         if any(word in text.lower() for word in STOP_WORDS):
                             continue
                             
-                        # Agar mavzu (keyword) tanlangan bo'lsa, mos kelishini tekshiramiz
                         if keywords:
                             if any(kw.lower() in text.lower() for kw in keywords):
                                 posts.append(text)
                         else:
                             posts.append(text)
                 
-                # Agar arxivdan postlar topilsa, bittasini tasodifiy (random) tanlaymiz
                 if posts:
                     chosen_content = random.choice(posts)
                     
-                    # ✨ SIZ AYTGANDEK TELEGRAMDA JUDA GO'ZAL VA CHIROYLI DIZAYNDA CHIQADIGAN SHABLON
                     formatted_text = (
                         f"📖 **Ma'rifat Ulashuvchi Kontent**\n"
                         f"┄┄┄┄┄┄┄┄┄┄┄┄┄┄┄┄┄┄┄┄┄┄┄┄┄\n\n"
@@ -331,22 +288,19 @@ async def cron_checker():
                         f"📚 **Iqro Avto-Post Tizimi** 🕊️"
                     )
                     
-                    # O'zingizning kanalingizga yuborish
                     await app.send_message(target_chat, formatted_text, parse_mode=ParseMode.MARKDOWN)
                     print(f"✅ Arxiv post muvaffaqiyatli yuborildi: {target_chat}")
                 else:
                     print(f"⚠️ Arxivdan mos keladigan kontent topilmadi: @{clean_source}")
                     
             except errors.FloodWait as e:
-                # Telegram cheklov qo'ymasligi uchun himoya
                 print(f"⏳ Telegram FloodWait: {e.value} soniya kutilmoqda...")
                 await asyncio.sleep(e.value)
             except Exception as e:
                 print(f"❌ Arxiv postni olishda yoki yuborishda xato: {e}")
-                
 
-
-
+# KODINGIZDAGI BARCHA BUYRUQLARNING ASLIYA HOLATI REKORATOR BILAN TO'G'RILANDI:
+@app.on_message(filters.private & filters.command(["start", "help", "savol", "taklif", "privacy"]))
 async def commands_handler(client, message):
     user_id = str(message.from_user.id)
     cmd = message.command[0] if message.command else "start"
@@ -665,7 +619,7 @@ async def handle_text_inputs(client, message):
         update_user_state(user_id, "expecting", None)
         await message.reply(txt["thanks_feedback"])
 
-# 📡 Internal Web Server Render uchun portni ushlab turadi
+# 📡 Internal Web Server Render uchun
 async def handle_render_port(reader, writer):
     response = b"HTTP/1.1 200 OK\r\nContent-Length: 14\r\n\r\nPremium Active"
     writer.write(response)
@@ -674,16 +628,18 @@ async def handle_render_port(reader, writer):
 
 async def main():
     port = int(os.environ.get("PORT", 10000))
-    server = await asyncio.start_server(handle_render_port, '0.0.0.0', port)
-    print(f"📡 Premium Server Portda ochiq: {port}")
+    try:
+        server = await asyncio.start_server(handle_render_port, '0.0.0.0', port)
+        print(f"📡 Premium Server Portda ochiq: {port}")
+    except Exception as e:
+        print(f"⚠️ Serverni ochishda xato (ehtimol port band): {e}")
 
     async with app:
         scheduler.add_job(cron_checker, "interval", minutes=1)
         scheduler.start()
-        print("🚀 IQRO PRO ULTRA PREMIUM bot ishga tushdi!")
+        print("🚀 IQRO PRO ULTRA PREMIUM bot/userbot ishga tushdi!")
         await asyncio.Event().wait()
 
 if __name__ == "__main__":
-    
+    loop = asyncio.get_event_loop()
     loop.run_until_complete(main())
-
