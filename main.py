@@ -1,39 +1,43 @@
-
 import asyncio
-import random
-import json
+import threading
+import sys
 import os
+import json
+import random
 import re
 import time
-import httpx
-from bs4 import BeautifulSoup
-from pyrogram import Client, filters, errors
-from pyrogram.types import (
-    InlineKeyboardMarkup, InlineKeyboardButton,
-    ReplyKeyboardMarkup, KeyboardButton
-)
-from pyrogram.enums import ParseMode
-from apscheduler.schedulers.asyncio import AsyncIOScheduler
+import logging
 from datetime import datetime
+from apscheduler.schedulers.asyncio import AsyncIOScheduler
 
-# Event Loop xavfsizligini ta'minlash
+# Python 3.14+ Event Loop xavfsizligini ta'minlash
 try:
     asyncio.get_event_loop()
 except RuntimeError:
     loop = asyncio.new_event_loop()
     asyncio.set_event_loop(loop)
 
-# 🔐 ASOSIY PARAMETRLAR
-# DIQQAT: Userbot ishlashi uchun bot_token olib tashlandi
+from pyrogram import Client, filters, errors
+from pyrogram.types import (
+    InlineKeyboardMarkup, InlineKeyboardButton,
+    ReplyKeyboardMarkup, KeyboardButton
+)
+from pyrogram.enums import ParseMode, ChatType
+
+# LOGGING - Professional monitoring tizimi
+logging.basicConfig(
+    level=logging.INFO,
+    format="%(asctime)s [%(levelname)s] %(message)s",
+    handlers=[logging.StreamHandler(sys.stdout)]
+)
+logger = logging.getLogger("IqroPremium")
+
+# 🔐 ASOSIY USERBOT PARAMETRLARI
 API_ID = 33118317
 API_HASH = "53aae636122c27a99a6c211ecc5d0c68"
 REQUIRED_CHANNEL = "oqivaqotaril"
 
-app = Client(
-    "iqro_premium_bot",
-    api_id=API_ID,
-    api_hash=API_HASH
-)
+app = Client("iqro_premium_bot", api_id=API_ID, api_hash=API_HASH)
 scheduler = AsyncIOScheduler()
 
 # 🗄️ MA'LUMOTLAR OMBORI FAYLLARI
@@ -41,9 +45,11 @@ SETTINGS_FILE = "user_settings.json"
 PASSED_USERS_FILE = "passed_users.json"
 STATES_FILE = "user_states.json"
 FEEDBACK_FILE = "feedback.json"
+SENT_POSTS_FILE = "sent_posts.json"  # Duplikatlarni oldini olish uchun
 
 click_timers = {}
 
+# 📌 TIZIM KONSTANTALARI
 PREDEFINED_TOPICS = [
     "Oyat", "Hadis", "Sher", "Hikoya", "Hikmat", 
     "Salovat", "Fiqh", "Tarix", "Ruhiyat", "Motivatsiya",
@@ -52,168 +58,90 @@ PREDEFINED_TOPICS = [
 
 PREDEFINED_CHANNELS = [
     "@oqivaqotaril", "@annuvr", "@ihruz", "@hikmatlar_hazinasi", "@ilm_nuri",
-    "@soliham", "@islomuz", "@quran_uz", "@hadis_uz", "@ziyouz",
-    "@siyrat_uz", "@tarix_uz", "@ruhiyat_uz", "@salovatchilar", "@duolar_uz"
+    "@soliham", "@islomuz", "@quran_uz", "@hadis_uz", "@ziyouz"
 ]
 
 AVAILABLE_TIMES = [
-    "05:00", "05:30", "06:00", "07:00", "08:00", "09:00", "10:00", "11:00",
-    "12:00", "13:00", "14:00", "15:00", "16:00", "17:00", "18:00", "19:00",
-    "20:00", "21:00", "22:00", "23:00", "00:00"
+    "05:00", "06:00", "07:00", "08:00", "09:00", "10:00", "11:00", "12:00",
+    "13:00", "14:00", "15:00", "16:00", "17:00", "18:00", "19:00", "20:00",
+    "21:00", "22:00", "23:00", "00:00"
 ]
 
-# 🌐 KO'P TILLI MUKAMMAL MATNLAR TIZIMI
+STOP_WORDS = [
+    "http://", "https://", "t.me/", "tg.me", "reklama", "aksiya", "chegirma", 
+    "tanlov", "homiy", "click", "payme", "skachat", "bepul", "bosing"
+]
+
+# =====================================================================
+# LINGVISTIK PRO-MATNLAR BAZASI
+# =====================================================================
 TEXTS = {
     "uz_lot": {
-        "about": "✨ **'Iqro Pro Ultra' Premium Avto-Post Tizimi**\n\n📜 **Tizim imkoniyatlari:**\n» Manba kanallaridan eng sara postlarni saralaydi.\n» Belgilangan mavzular bo'yicha filtrlaydi.\n» Kanalingizga avtomatik ravishda tayyorlangan postlarni joylaydi.\n\n⚙️ *Sozlashni boshlash uchun quyidagi tugmani bosing:*",
+        "about": "✨ **'Iqro Pro Ultra' Premium Avto-Post Tizimi**\n\n📜 **Tizim imkoniyatlari:**\n» Bir nechta manba kanallaridan postlarni yig'ish.\n» Smart-Media (Foto/Video) va duplikatlardan himoya.\n» Avtomatik va professional kontent joylash.",
         "sub_req": "👋 Botdan to'liq foydalanish va sozlash uchun avval rasmiy kanalimizga a'zo bo'ling:",
         "sub_btn": "📢 Kanalga Obuna Bo'lish",
         "verify_btn": "✅ Obunani Tasdiqlash",
         "too_fast": "⚠️ Sokinroq! Tasdiqlash uchun kamida 2 soniya kuting.",
         "verified": "🎉 Obuna muvaffaqiyatli tasdiqlandi!",
         "main_menu_btn": "⚙️ Avto-postni Sozlash",
-        "step1": "🚀 **1-Bosqich:** Matn manbasini (Kanalni) tanlang yoki izlang:",
+        "step1": "🚀 **1-Bosqich:** Matn manbasini tanlang yoki o'zingiz kiritish tugmasini bosing:",
         "step2": "📂 **2-Bosqich:** Qaysi mavzudagi postlar sizga kerak?",
         "step3": "📢 **3-Bosqich:** Postlar yuboriladigan kanal yoki guruh `@username`ini yuboring:",
-        "step4": "⏳ **4-Bosqich:** Post yuborish vaqtlarini belgilang:\n\n*(Tugmalardan tanlang yoki qo'lda kiriting)*",
+        "step4": "⏳ **4-Bosqich:** Post yuborish vaqtlarini belgilang:",
         "back_btn": "⬅️ Orqaga",
         "home_btn": "🏠 Bosh Menyu",
         "save_btn": "💾 Saqlash va Aktivlashtirish",
-        "custom_btn": "🔍 Qo'lda kanal izlash",
+        "custom_btn": "🔍 Qo'lda bir nechta kanal kiritish",
         "custom_time_btn": "✍️ O'zim vaqt kiritaman",
-        "success": "🎉 **Barcha sozlamalar muvaffaqiyatli saqlandi va tizim ishga tushirildi!**\n\n*Belgilangan vaqtlarda bot kontent tarqatishni boshlaydi.*",
-        "menu_setup": "⚙️ Sozlash",
-        "menu_question": "💬 Savol yuborish",
-        "menu_suggestion": "💡 Taklif kiritish",
-        "menu_help": "🆘 Yordam xizmati",
-        "menu_about": "📢 Bot Haqida",
-        "menu_privacy": "🔒 Maxfiylik",
-        "menu_lang": "🌐 Til (Language)",
-        "privacy_text": "🔒 **Maxfiylik Siyosati:**\n\n1. Sizning sozlamalaringiz xavfsiz va maxfiy saqlanadi.\n2. Bot faqat siz ruxsat bergan kanallarda xizmat ko'rsatadi.\n3. Shaxsiy ma'lumotlar uchinchi shaxslarga berilmaydi.",
-        "about_text": "🤖 **Iqro Pro Ultra Bot:**\n\nKanallarni eng sifatli va saralangan islomiy hamda ma'rifiy kontentlar bilan avtomatik to'ldirib boruvchi yordamchi.\n\n📢 Kanal: @oqivaqotaril",
-        "help_text": "🆘 **Tezkor Yordam:**\n\n❓ **Bot kanalga post tashlamayapti?**\n- Botni o'zingizning kanalingizga **Admin** qilib qo'shganingizga va post joylash huquqini berganingizga ishonch hosil qiling.\n\n❓ **Qo'lda vaqt kiritish qanday?**\n- '✍️ O'zim vaqt kiritaman' tugmasini bosib, `07:15, 14:30` ko'rinishida yozing.",
-        "ask_question": "💬 **Savolingizni matn shaklida yuboring:**\n*Mutaxassislarimiz tez orada javob berishadi.*",
-        "ask_suggestion": "💡 **Loyiha sifatini oshirish uchun taklifingizni yozing:**",
-        "thanks_feedback": "✅ Rahmat! Murojaatingiz muvaffaqiyatli qabul qilindi.",
-        "enter_custom_time_prompt": "✍️ **Vaqtlarni HH:MM formatida vergul bilan ajratib yuboring.**\n\nMasalan: `08:00, 13:15, 21:45`",
-        "invalid_time": "❌ Vaqt formati xato. Iltimos, na'munadagidek kiriting: `09:30` yoki `12:00, 18:45`"
+        "success": "🎉 **Barcha sozlamalar muvaffaqiyatli saqlandi va tizim ishga tushirildi!**",
+        "menu_setup": "⚙️ Sozlash", "menu_question": "💬 Savol yuborish",
+        "menu_suggestion": "💡 Taklif kiritish", "menu_help": "🆘 Yordam xizmati",
+        "menu_about": "📢 Bot Haqida", "menu_privacy": "🔒 Maxfiylik", "menu_lang": "🌐 Til",
+        "privacy_text": "🔒 **Maxfiylik Siyosati:** Sozlamalaringiz xavfsiz shifrlangan holatda saqlanadi.",
+        "about_text": "🤖 **Iqro Pro Ultra Bot** - Kanallarni avtomatlashtirish tizimi.",
+        "help_text": "🆘 **Yordam:** Botni kanalingizga admin qilib qo'shing va post joylash huquqini bering.",
+        "ask_question": "💬 **Savolingizni yuboring:**", "ask_suggestion": "💡 **Taklifingizni yozing:**",
+        "thanks_feedback": "✅ Murojaatingiz muvaffaqiyatli qabul qilindi.",
+        "enter_custom_time_prompt": "✍️ **Vaqtlarni HH:MM formatida vergul bilan ajratib yuboring (Masalan: 08:00, 14:30):**",
+        "invalid_time": "❌ Format xato. Na'muna: `09:30` yoki `12:00, 18:45`"
     },
     "uz_kir": {
-        "about": "✨ **'Iqro Pro Ultra' Премиум Авто-Пост Тизими**\n\n📜 **Тизим imkoniyatlari:**\n» Манба каналларидан энг сара постларни саралайди.\n» Белгиланган мавзулар бўйича филтрлайди.\n» Каналингизга автоматик равишda тайёрланган постларни жойлайди.\n\n⚙️ *Созлашни бошлаш учун қуйидаги тугмани босинг:*",
-        "sub_req": "👋 Ботдан тўлиқ фойдаланиш ва созлаш учун аввал расмий каналимизга аъзо бўлинг:",
-        "sub_btn": "📢 Каналга Обуна Бўлиш",
-        "verify_btn": "✅ Обунани Тасдиқлаш",
-        "too_fast": "⚠️ Сокинроқ! Тасдиқлаш учун камида 2 сония кутинг.",
-        "verified": "🎉 Обуна муваффақиятли тасдиқланди!",
+        "about": "✨ **'Iqro Pro Ultra' Премиум Авто-Пост Тизими**",
+        "sub_req": "👋 Ботдан тўлиқ фойдаланиш учун расмий каналимизga аъзо бўлинг:",
+        "sub_btn": "📢 Каналга Обуна Бўлиш", "verify_btn": "✅ Обунани Тасдиқлаш",
+        "too_fast": "⚠️ Сокинроқ! Камида 2 сония кутинг.", "verified": "🎉 Обуна тасдиқланди!",
         "main_menu_btn": "⚙️ Авто-постни Созлаш",
-        "step1": "🚀 **1-Босқич:** Матн манбасини (Канални) танланг ёки изланг:",
-        "step2": "📂 **2-Босқич:** Қайси мавзудаги постлар сизга керак?",
-        "step3": "📢 **3-Босқич:** Постлар юбориладиган канал ёки гуруҳ `@username`ини юборинг:",
-        "step4": "⏳ **4-Босқич:** Пост юбориш вақтларини белгиланг:\n\n*(Тугмалардан танланг ёки қўлда киритинг)*",
-        "back_btn": "⬅️ Орқага",
-        "home_btn": "🏠 Бош Меню",
-        "save_btn": "💾 Сақлаш ва Активлаштириш",
-        "custom_btn": "🔍 Қўлда канал излаш",
-        "custom_time_btn": "✍️ Ўзим вақт киритаман",
-        "success": "🎉 **Барча созламалар муваффақиятли сақланди ва тизим ишга туширилди!**\n\n*Белгиланган вақтларда бот контент тарқатишни бошлайди.*",
-        "menu_setup": "⚙️ Созлаш",
-        "menu_question": "💬 Савол юбориш",
-        "menu_suggestion": "💡 Таклиф киритиш",
-        "menu_help": "🆘 Ёрдам хизмати",
-        "menu_about": "📢 Бот Ҳақида",
-        "menu_privacy": "🔒 Махфийлик",
-        "menu_lang": "🌐 Тил (Language)",
-        "privacy_text": "🔒 **Махфийлик Сиёсати:**\n\n1. Сизнинг созламаларингиз хавфсиз ва махфий сақланади.\n2. Бот фақат сиз рухсат берган каналларда хизмат кўрсатади.\n3. Шахсий маълумотлар учинчи шахсларга берилмайди.",
-        "about_text": "🤖 **Iqro Pro Ultra Бот:**\n\nКаналларни энг сифатли ва сараланган исломий ҳамда маърифий контентлар билан автоматик тўлдириб борувчи ёрдамчи.\n\n📢 Канал: @oqivaqotaril",
-        "help_text": "🆘 **Тезкор Ёрдам:**\n\n❓ **Бот каналга пост ташламаяпти?**\n- Ботни ўзингизнинг каналингизга **Админ** қилиб қўшганингизга ва пост жойлаш ҳуқуқини берганингизга ишонч ҳосил қилинг.\n\n❓ **Қўлда вақт киритиш qanday?**\n- '✍️ Ўзим ваqt киритаман' тугмасини босиб, `07:15, 14:30` кўринишида ёзинг.",
-        "ask_question": "💬 **Саволингизни матн шаклида юборинг:**\n*Мутахассисларимиз тез орада жавоб беришади.*",
-        "ask_suggestion": "💡 **Лойиҳа сифатини ошириш учун таклифингизни ёзинг:**",
-        "thanks_feedback": "✅ Раҳмат! Мурожаатингиз муваффақиятли қабул қилинди.",
-        "enter_custom_time_prompt": "✍️ **Вақтларни ХХ:ММ форматида вергул билан ажратиб юборинг.**\n\nМасалан: `08:00, 13:15, 21:45`",
-        "invalid_time": "❌ Вақт формати хато. Илтимос, наъмунадагидек киритинг: `09:30` ёки `12:00, 18:45`"
-    },
-    "ru": {
-        "about": "✨ **Premium Система Авто-Постинга 'Iqro Pro Ultra'**\n\n📜 **Возможности системы:**\n» Фильтрация лучших постов из каналов-источников.\n» Сортировка контента по выбранным темам.\n» Автоматическая публикация готовых постов в ваш канал.\n\n⚙️ *Для начала настройки нажмите кнопку ниже:*",
-        "sub_req": "👋 Для полноценного использования бота сначала подпишитесь на наш канал:",
-        "sub_btn": "📢 Подписаться на Канал",
-        "verify_btn": "✅ Проверить Подписку",
-        "too_fast": "⚠️ Не спешите! Подождите минимум 2 секунды перед проверкой.",
-        "verified": "🎉 Подписка успешно подтверждена!",
-        "main_menu_btn": "⚙️ Настроить Авто-постинг",
-        "step1": "🚀 **Шаг 1:** Выберите или найдите канал-источник контента:",
-        "step2": "📂 **Шаг 2:** Посты на какие темы вам необходимы?",
-        "step3": "📢 **Шаг 3:** Отправьте `@username` канала или группы, куда отправлять посты:",
-        "step4": "⏳ **Шаг 4:** Укажите время для публикаций:\n\n*(Выберите на кнопках или введите вручную)*",
-        "back_btn": "⬅️ Назад",
-        "home_btn": "🏠 Главное Меню",
-        "save_btn": "💾 Сохранить и Активировать",
-        "custom_btn": "🔍 Ручной поиск канала",
-        "custom_time_btn": "✍️ Введу время вручную",
-        "success": "🎉 **Все настройки успешно сохранены, система запущена!**\n\n*Бот начнет публикацию контента в указанное время.*",
-        "menu_setup": "⚙️ Настройка",
-        "menu_question": "💬 Задать вопрос",
-        "menu_suggestion": "💡 Предложение",
-        "menu_help": "🆘 Помощь",
-        "menu_about": "📢 О Боте",
-        "menu_privacy": "🔒 Конфиденциальность",
-        "menu_lang": "🌐 Язык (Language)",
-        "privacy_text": "🔒 **Политика Конфиденциальности:**\n\n1. Ваши настройки хранятся в безопасности и конфиденциальности.\n2. Бот работает только в тех каналах, где вы предоставили доступ.\n3. Личные данные не передаются третьим лицам.",
-        "about_text": "🤖 **Бот Iqro Pro Ultra:**\n\nВаш персональный помощник для автоматического наполнения каналов качественным исламским и просветительским контентом.\n\n📢 Наш канал: @oqivaqotaril",
-        "help_text": "🆘 **Быстрая Помощь:**\n\n❓ **Бот не публикует посты в канал?**\n- Убедитесь, что вы добавили бота в свой канал в качестве **Администратора** с правом публикации постов.\n\n❓ **Как ввести время вручную?**\n- Нажмите кнопку '✍️ Введу время вручную' и отправьте в формате: `07:15, 14:30`.",
-        "ask_question": "💬 **Отправьте ваш вопрос в текстовом виде:**\n*Наши специалисты ответят вам в ближайшее время.*",
-        "ask_suggestion": "💡 **Напишите свое предложение для улучшения проекта:**",
-        "thanks_feedback": "✅ Спасибо! Ваше обращение успешно принято.",
-        "enter_custom_time_prompt": "✍️ **Отправьте время в формате ЧЧ:ММ через запятую.**\n\nПример: `08:00, 13:15, 21:45`",
-        "invalid_time": "❌ Неверный формат времени. Пожалуйста, введите по шаблону: `09:30` или `12:00, 18:45`"
-    },
-    "en": {
-        "about": "✨ **'Iqro Pro Ultra' Premium Auto-Post System**\n\n📜 **System Features:**\n» Filters the best posts from source channels.\n» Categorizes content based on selected topics.\n» Automatically publishes compiled posts to your channel.\n\n⚙️ *Click the button below to start configuration:*",
-        "sub_req": "👋 To fully use and configure the bot, please subscribe to our official channel first:",
-        "sub_btn": "📢 Subscribe to Channel",
-        "verify_btn": "✅ Verify Subscription",
-        "too_fast": "⚠️ Slow down! Please wait at least 2 seconds before verifying.",
-        "verified": "🎉 Subscription successfully verified!",
-        "main_menu_btn": "⚙️ Configure Auto-Post",
-        "step1": "🚀 **Step 1:** Select or search for the content source channel:",
-        "step2": "📂 **Step 2:** Which topics of posts do you need?",
-        "step3": "📢 **Step 3:** Send the `@username` of the target channel or group:",
-        "step4": "⏳ **Step 4:** Set publication schedules:\n\n*(Choose from buttons or enter manually)*",
-        "back_btn": "⬅️ Back",
-        "home_btn": "🏠 Main Menu",
-        "save_btn": "💾 Save & Activate",
-        "custom_btn": "🔍 Search Channel Manually",
-        "custom_time_btn": "✍️ Enter Custom Time",
-        "success": "🎉 **All configurations saved successfully and system activated!**\n\n*The bot will start publishing content at the scheduled times.*",
-        "menu_setup": "⚙️ Settings",
-        "menu_question": "💬 Ask Question",
-        "menu_suggestion": "💡 Suggestion",
-        "menu_help": "🆘 Help & Support",
-        "menu_about": "📢 About Bot",
-        "menu_privacy": "🔒 Privacy",
-        "menu_lang": "🌐 Language",
-        "privacy_text": "🔒 **Privacy Policy:**\n\n1. Your configurations and data are kept secure and strictly confidential.\n2. The bot only acts within channels where you granted admin rights.\n3. Personal information is never shared with third parties.",
-        "about_text": "🤖 **Iqro Pro Ultra Bot:**\n\nAn automated assistant designed to populate your Telegram channels with refined educational and Islamic content.\n\n📢 Channel: @oqivaqotaril",
-        "help_text": "🆘 **Quick Help:**\n\n❓ **The bot isn't posting to my channel?**\n- Ensure you have added the bot as an **Admin** to your channel with permission to post messages.\n\n❓ **How to add custom times?**\n- Click '✍️ Enter Custom Time' and type like: `07:15, 14:30`.",
-        "ask_question": "💬 **Send your question in text format:**\n*Our support team will respond shortly.*",
-        "ask_suggestion": "💡 **Write your suggestions to improve this project:**",
-        "thanks_feedback": "✅ Thank you! Your feedback has been successfully recorded.",
-        "enter_custom_time_prompt": "✍️ **Send times in HH:MM format separated by commas.**\n\nExample: `08:00, 13:15, 21:45`",
-        "invalid_time": "❌ Invalid time format. Please enter according to the template: `09:30` or `12:00, 18:45`"
+        "step1": "🚀 **1-Босқич:** Матн манбасини танланг:", "step2": "📂 **2-Босқич:** Мавзуни танланг:",
+        "step3": "📢 **3-Босқич:** Мақсадли канал `@username`ини юборинг:", "step4": "⏳ **4-Босқич:** Вақтларни белгиланг:",
+        "back_btn": "⬅️ Орқага", "home_btn": "🏠 Бош Меню", "save_btn": "💾 Сақлаш",
+        "custom_btn": "🔍 Қўлда канал киритиш", "custom_time_btn": "✍️ Ўзим вақт киритаман",
+        "success": "🎉 **Тизим муваффақиятли ишга туширилди!**",
+        "menu_setup": "⚙️ Созлаш", "menu_question": "💬 Савол юбориш", "menu_suggestion": "💡 Таклиф киритиш",
+        "menu_help": "🆘 Ёрдам хизмати", "menu_about": "📢 Бот Ҳақида", "menu_privacy": "🔒 Махфийлик", "menu_lang": "🌐 Тил",
+        "privacy_text": "🔒 **Махфийлик Сиёсати:** Сизнинг созламаларингиз хавфсиз сақланади.",
+        "about_text": "🤖 **Iqro Pro Ultra Бот** - Каналларни автоматлаштириш.",
+        "help_text": "🆘 **Ёрдам:** Ботни каналга Админ қилиб қўшинг.",
+        "ask_question": "💬 **Саволингизни юборинг:**", "ask_suggestion": "💡 **Таклифингизни ёзинг:**",
+        "thanks_feedback": "✅ Мурожаатингиз қабул қилинди.",
+        "enter_custom_time_prompt": "✍️ **Вақтларни ХХ:ММ форматида вергул билан ажратиб юборинг:**",
+        "invalid_time": "❌ Вақт формати хато."
     }
 }
 
+# =====================================================================
+# MA'LUMOTLAR BILAN ISHLASH MUKAMMAL INTEGRATSIYASI
+# =====================================================================
 def load_json(filename):
     if os.path.exists(filename):
         try:
-            with open(filename, "r", encoding="utf-8") as f:
-                return json.load(f)
-        except Exception:
-            return {}
+            with open(filename, "r", encoding="utf-8") as f: return json.load(f)
+        except Exception as e: logger.error(f"Fayl o'qishda xato {filename}: {e}"); return {}
     return {}
 
 def save_json(filename, data):
-    with open(filename, "w", encoding="utf-8") as f:
-        json.dump(data, f, ensure_ascii=False, indent=4)
+    try:
+        with open(filename, "w", encoding="utf-8") as f: json.dump(data, f, ensure_ascii=False, indent=4)
+    except Exception as e: logger.error(f"Faylga yozishda xato {filename}: {e}")
 
 def get_user_state(user_id):
     states = load_json(STATES_FILE)
@@ -222,149 +150,58 @@ def get_user_state(user_id):
 def update_user_state(user_id, key, value):
     states = load_json(STATES_FILE)
     u_id = str(user_id)
-    if u_id not in states:
-        states[u_id] = {"lang": "uz_lot"}
+    if u_id not in states: states[u_id] = {"lang": "uz_lot"}
     states[u_id][key] = value
     save_json(STATES_FILE, states)
 
 def get_reply_keyboard(lang):
     txt = TEXTS.get(lang, TEXTS["uz_lot"])
-    return ReplyKeyboardMarkup(
-        [
-            [KeyboardButton(txt["menu_setup"]), KeyboardButton(txt["menu_lang"])],
-            [KeyboardButton(txt["menu_question"]), KeyboardButton(txt["menu_suggestion"])],
-            [KeyboardButton(txt["menu_help"]), KeyboardButton(txt["menu_about"])],
-            [KeyboardButton(txt["menu_privacy"])]
-        ],
-        resize_keyboard=True
-    )
+    return ReplyKeyboardMarkup([
+        [KeyboardButton(txt["menu_setup"]), KeyboardButton(txt["menu_lang"])],
+        [KeyboardButton(txt["menu_question"]), KeyboardButton(txt["menu_suggestion"])],
+        [KeyboardButton(txt["menu_help"]), KeyboardButton(txt["menu_privacy"])]
+    ], resize_keyboard=True)
 
-STOP_WORDS = ["http://", "https://", "t.me/", "tg.me", "reklama", "aksiya", "chegirma", "tanlov", "homiy", "click", "payme"]
+# =====================================================================
+# COMMAND HANDLERLAR
+# =====================================================================
+@app.on_message(filters.private & filters.command("start"))
+async def start_command_handler(client, message):
+    btn = InlineKeyboardMarkup([
+        [InlineKeyboardButton("🇺🇿 O'zbekcha (Lotin)", callback_data="lang_uz_lot")],
+        [InlineKeyboardButton("🇺🇿 Ўзбекча (Кирил)", callback_data="lang_uz_kir")]
+    ])
+    await message.reply("🌐 **Muloqot tilini tanlang / Выберите язык:**", reply_markup=btn)
 
-async def cron_checker():
-    print("⏰ Arxiv va eski postlarni saralash tizimi ishga tushdi...")
-    settings = load_json(SETTINGS_FILE)
-    now = datetime.now().strftime("%H:%M")
-    
-    for user_id, config in settings.items():
-        user_times = config.get("times", [])
-        
-        if now in user_times:
-            target_chat = config.get("target_chat")
-            source_channel = config.get("source_channel")
-            keywords = config.get("keywords", [])
-            
-            if not target_chat or not source_channel:
-                continue
-            
-            clean_source = source_channel.replace("@", "").strip()
-            
-            try:
-                print(f"📦 @{clean_source} kanalidan arxiv postlar yuklanyapti...")
-                posts = []
-                
-                async for message in app.get_chat_history(clean_source, limit=300):
-                    text = message.text or message.caption
-                    
-                    if text and len(text) > 15:
-                        if any(word in text.lower() for word in STOP_WORDS):
-                            continue
-                            
-                        if keywords:
-                            if any(kw.lower() in text.lower() for kw in keywords):
-                                posts.append(text)
-                        else:
-                            posts.append(text)
-                
-                if posts:
-                    chosen_content = random.choice(posts)
-                    
-                    formatted_text = (
-                        f"📖 **Ma'rifat Ulashuvchi Kontent**\n"
-                        f"┄┄┄┄┄┄┄┄┄┄┄┄┄┄┄┄┄┄┄┄┄┄┄┄┄\n\n"
-                        f"{chosen_content}\n\n"
-                        f"┄┄┄┄┄┄┄┄┄┄┄┄┄┄┄┄┄┄┄┄┄┄┄┄┄\n"
-                        f"✍️ **Manba:** @{clean_source}\n"
-                        f"📚 **Iqro Avto-Post Tizimi** 🕊️"
-                    )
-                    
-                    await app.send_message(target_chat, formatted_text, parse_mode=ParseMode.MARKDOWN)
-                    print(f"✅ Arxiv post muvaffaqiyatli yuborildi: {target_chat}")
-                else:
-                    print(f"⚠️ Arxivdan mos keladigan kontent topilmadi: @{clean_source}")
-                    
-            except errors.FloodWait as e:
-                print(f"⏳ Telegram FloodWait: {e.value} soniya kutilmoqda...")
-                await asyncio.sleep(e.value)
-            except Exception as e:
-                print(f"❌ Arxiv postni olishda yoki yuborishda xato: {e}")
-
-# KODINGIZDAGI BARCHA BUYRUQLARNING ASLIYA HOLATI REKORATOR BILAN TO'G'RILANDI:
-@app.on_message(filters.private & filters.command(["start", "help", "savol", "taklif", "privacy"]))
-async def commands_handler(client, message):
-    user_id = str(message.from_user.id)
-    cmd = message.command[0] if message.command else "start"
-    state = get_user_state(user_id)
-    lang = state.get("lang", "uz_lot")
-    txt = TEXTS.get(lang, TEXTS["uz_lot"])
-
-    if cmd == "start":
-        btn = InlineKeyboardMarkup([
-            [InlineKeyboardButton("🇺🇿 O'zbekcha (Lotin)", callback_data="lang_uz_lot")],
-            [InlineKeyboardButton("🇺🇿 Ўзбекча (Кирил)", callback_data="lang_uz_kir")],
-            [InlineKeyboardButton("🇷🇺 Русский", callback_data="lang_ru")],
-            [InlineKeyboardButton("🇬🇧 English", callback_data="lang_en")]
-        ])
-        await message.reply(
-            "🌐 **Muloqot tilini tanlang / Выберите язык / Choose language:**",
-            reply_markup=btn
-        )
-    elif cmd == "help":
-        await message.reply(txt["help_text"], reply_markup=get_reply_keyboard(lang))
-    elif cmd == "savol":
-        update_user_state(user_id, "expecting", "user_question")
-        await message.reply(txt["ask_question"], reply_markup=get_reply_keyboard(lang))
-    elif cmd == "taklif":
-        update_user_state(user_id, "expecting", "user_suggestion")
-        await message.reply(txt["ask_suggestion"], reply_markup=get_reply_keyboard(lang))
-    elif cmd == "privacy":
-        await message.reply(txt["privacy_text"], reply_markup=get_reply_keyboard(lang))
-
+# =====================================================================
+# CALLBACK QUERY - STEP LOGIKALARI VA PROFESSIONAL_NAVIGATSIYA
+# =====================================================================
 @app.on_callback_query(filters.regex(r"^lang_"))
-async def handle_lang_choice(client, callback):
+async def language_selection_callback(client, callback):
     lang = callback.data.replace("lang_", "")
     user_id = str(callback.from_user.id)
-    
     update_user_state(user_id, "lang", lang)
-    passed_users = load_json(PASSED_USERS_FILE)
     
+    passed_users = load_json(PASSED_USERS_FILE)
     if user_id in passed_users:
-        try: await callback.message.delete()
-        except: pass
-        await show_main_menu(callback.message, lang, edit=False)
+        await show_main_menu(callback.message, lang, edit=True)
     else:
         click_timers[user_id] = time.time()
-        txt = TEXTS.get(lang, TEXTS["uz_lot"])
+        txt = TEXTS[lang]
         btn = InlineKeyboardMarkup([
             [InlineKeyboardButton(txt["sub_btn"], url=f"https://t.me/{REQUIRED_CHANNEL}")],
             [InlineKeyboardButton(txt["verify_btn"], callback_data="check_subscription")]
         ])
-        await callback.message.edit_text(
-            f"{txt['about']}\n\n{txt['sub_req']} @{REQUIRED_CHANNEL}",
-            reply_markup=btn
-        )
+        await callback.message.edit_text(f"{txt['about']}\n\n{txt['sub_req']} @{REQUIRED_CHANNEL}", reply_markup=btn)
 
 @app.on_callback_query(filters.regex("check_subscription"))
-async def check_sub_callback(client, callback):
+async def subscription_verification_callback(client, callback):
     user_id = str(callback.from_user.id)
     state = get_user_state(user_id)
     lang = state.get("lang", "uz_lot")
-    txt = TEXTS.get(lang, TEXTS["uz_lot"])
+    txt = TEXTS[lang]
     
-    current_time = time.time()
-    start_time = click_timers.get(user_id, current_time)
-    
-    if (current_time - start_time) < 2.0:
+    if (time.time() - click_timers.get(user_id, time.time())) < 2.0:
         await callback.answer(txt["too_fast"], show_alert=True)
         return
 
@@ -372,33 +209,23 @@ async def check_sub_callback(client, callback):
     passed_users[user_id] = True
     save_json(PASSED_USERS_FILE, passed_users)
     
-    await callback.answer(txt["verified"], show_alert=False)
-    try: await callback.message.delete()
-    except: pass
-    
-    await show_main_menu(callback.message, lang, edit=False)
+    await callback.answer(txt["verified"])
+    await show_main_menu(callback.message, lang, edit=True)
 
 async def show_main_menu(message, lang="uz_lot", edit=True):
-    txt = TEXTS.get(lang, TEXTS["uz_lot"])
-    btn = InlineKeyboardMarkup([
-        [InlineKeyboardButton(txt["main_menu_btn"], callback_data="step_1_source")]
-    ])
+    txt = TEXTS[lang]
+    btn = InlineKeyboardMarkup([[InlineKeyboardButton(txt["main_menu_btn"], callback_data="step_1_source")]])
     if edit:
         await message.edit_text(txt["about"], reply_markup=btn)
     else:
-        await app.send_message(
-            chat_id=message.chat.id,
-            text=txt["about"],
-            reply_markup=get_reply_keyboard(lang)
-        )
-        await app.send_message(chat_id=message.chat.id, text=txt["about"], reply_markup=btn)
+        await app.send_message(message.chat.id, txt["about"], reply_markup=btn)
 
+# STEP 1: MULTI-CHANNEL SOURCE SELECTION
 @app.on_callback_query(filters.regex("step_1_source"))
-async def step_1_source(client, callback):
+async def step_1_source_handler(client, callback):
     user_id = str(callback.from_user.id)
-    state = get_user_state(user_id)
-    lang = state.get("lang", "uz_lot")
-    txt = TEXTS.get(lang, TEXTS["uz_lot"])
+    lang = get_user_state(user_id).get("lang", "uz_lot")
+    txt = TEXTS[lang]
     
     buttons = []
     for i in range(0, len(PREDEFINED_CHANNELS), 2):
@@ -409,184 +236,119 @@ async def step_1_source(client, callback):
         
     buttons.append([InlineKeyboardButton(txt["custom_btn"], callback_data="src_custom")])
     buttons.append([InlineKeyboardButton(txt["home_btn"], callback_data="go_home")])
-    
     await callback.message.edit_text(txt["step1"], reply_markup=InlineKeyboardMarkup(buttons))
 
 @app.on_callback_query(filters.regex(r"^src_"))
-async def handle_source_choice(client, callback):
+async def source_channel_selection_handler(client, callback):
     user_id = str(callback.from_user.id)
-    state = get_user_state(user_id)
-    lang = state.get("lang", "uz_lot")
-    txt = TEXTS.get(lang, TEXTS["uz_lot"])
+    lang = get_user_state(user_id).get("lang", "uz_lot")
     src = callback.data.replace("src_", "")
     
     if src == "custom":
         update_user_state(user_id, "expecting", "source")
-        btn = InlineKeyboardMarkup([
-            [InlineKeyboardButton(txt["back_btn"], callback_data="step_1_source")],
-            [InlineKeyboardButton(txt["home_btn"], callback_data="go_home")]
-        ])
-        await callback.message.edit_text("📝 Kanal username-ini yozib kiriting (Masalan: `@annuvr`):", reply_markup=btn)
+        await callback.message.edit_text("📝 **Manba kanallarni kiriting.** Bir nechta bo'lsa vergul bilan yozing:\n\nMasalan: `@kanal1, @kanal2, @kanal3`")
     else:
-        update_user_state(user_id, "source_channel", src)
+        update_user_state(user_id, "source_channels", [src])
         await show_step_2_topics(callback.message, lang)
 
+# STEP 2: MAVZULAR
 async def show_step_2_topics(message, lang="uz_lot"):
-    txt = TEXTS.get(lang, TEXTS["uz_lot"])
+    txt = TEXTS[lang]
     buttons = []
     for i in range(0, len(PREDEFINED_TOPICS), 3):
-        row = []
-        for top in PREDEFINED_TOPICS[i:i+3]:
-            row.append(InlineKeyboardButton(f"📌 {top}", callback_data=f"top_{top}"))
+        row = [InlineKeyboardButton(f"📌 {top}", callback_data=f"top_{top}") for top in PREDEFINED_TOPICS[i:i+3]]
         buttons.append(row)
-        
     buttons.append([InlineKeyboardButton(txt["back_btn"], callback_data="step_1_source"), InlineKeyboardButton(txt["home_btn"], callback_data="go_home")])
     await message.edit_text(txt["step2"], reply_markup=InlineKeyboardMarkup(buttons))
 
 @app.on_callback_query(filters.regex(r"^top_"))
-async def handle_topic_choice(client, callback):
+async def topic_selection_handler(client, callback):
     user_id = str(callback.from_user.id)
-    state = get_user_state(user_id)
-    lang = state.get("lang", "uz_lot")
+    lang = get_user_state(user_id).get("lang", "uz_lot")
     top = callback.data.replace("top_", "")
     
-    if top == "Hammasi":
-        update_user_state(user_id, "keywords", [])
-    else:
-        update_user_state(user_id, "keywords", [top.lower()])
-        
+    update_user_state(user_id, "keywords", [] if top == "Hammasi" else [top.lower()])
     update_user_state(user_id, "expecting", "target_chat")
-    txt = TEXTS.get(lang, TEXTS["uz_lot"])
-    
-    btn = InlineKeyboardMarkup([
-        [InlineKeyboardButton(txt["back_btn"], callback_data="step_2_back"), InlineKeyboardButton(txt["home_btn"], callback_data="go_home")]
-    ])
-    await callback.message.edit_text(txt["step3"], reply_markup=btn)
-
-@app.on_callback_query(filters.regex("step_2_back"))
-async def step_2_back(client, callback):
-    user_id = str(callback.from_user.id)
-    state = get_user_state(user_id)
-    lang = state.get("lang", "uz_lot")
-    await show_step_2_topics(callback.message, lang)
+    await callback.message.edit_text(TEXTS[lang]["step3"])
 
 @app.on_callback_query(filters.regex("go_home"))
-async def go_home_callback(client, callback):
-    user_id = str(callback.from_user.id)
-    state = get_user_state(user_id)
-    lang = state.get("lang", "uz_lot")
+async def back_to_home_navigation(client, callback):
+    lang = get_user_state(str(callback.from_user.id)).get("lang", "uz_lot")
     await show_main_menu(callback.message, lang, edit=True)
 
+# STEP 4: SMART VAQTLAR TIZIMI
 async def show_step_4_times(message, user_id, lang="uz_lot", edit=True):
-    txt = TEXTS.get(lang, TEXTS["uz_lot"])
-    state = get_user_state(user_id)
-    selected = state.get("selected_times", [])
+    txt = TEXTS[lang]
+    selected = get_user_state(user_id).get("selected_times", [])
     
     buttons = []
     for i in range(0, len(AVAILABLE_TIMES), 4):
-        row = []
-        for t in AVAILABLE_TIMES[i:i+4]:
-            mark = "✅ " if t in selected else "▫️ "
-            row.append(InlineKeyboardButton(f"{mark}{t}", callback_data=f"tm_{t}"))
+        row = [InlineKeyboardButton(f"{'✅ ' if t in selected else '▫️ '}{t}", callback_data=f"tm_{t}") for t in AVAILABLE_TIMES[i:i+4]]
         buttons.append(row)
         
     buttons.append([InlineKeyboardButton(txt["custom_time_btn"], callback_data="custom_time_input")])
     buttons.append([InlineKeyboardButton(txt["save_btn"], callback_data="save_all")])
-    buttons.append([InlineKeyboardButton(txt["back_btn"], callback_data="step_2_back"), InlineKeyboardButton(txt["home_btn"], callback_data="go_home")])
     
-    if edit:
-        await message.edit_text(txt["step4"], reply_markup=InlineKeyboardMarkup(buttons))
-    else:
-        await app.send_message(chat_id=message.chat.id, text=txt["step4"], reply_markup=InlineKeyboardMarkup(buttons))
+    if edit: await message.edit_text(txt["step4"], reply_markup=InlineKeyboardMarkup(buttons))
+    else: await app.send_message(message.chat.id, txt["step4"], reply_markup=InlineKeyboardMarkup(buttons))
 
 @app.on_callback_query(filters.regex("custom_time_input"))
-async def custom_time_input_cb(client, callback):
+async def custom_time_input_callback_handler(client, callback):
     user_id = str(callback.from_user.id)
-    state = get_user_state(user_id)
-    lang = state.get("lang", "uz_lot")
-    txt = TEXTS.get(lang, TEXTS["uz_lot"])
-    
     update_user_state(user_id, "expecting", "custom_time")
-    await callback.message.edit_text(txt["enter_custom_time_prompt"])
+    await callback.message.edit_text(TEXTS[get_user_state(user_id).get("lang", "uz_lot")]["enter_custom_time_prompt"])
 
 @app.on_callback_query(filters.regex(r"^tm_"))
-async def toggle_time(client, callback):
+async def time_toggle_callback_handler(client, callback):
     user_id = str(callback.from_user.id)
     state = get_user_state(user_id)
-    lang = state.get("lang", "uz_lot")
     t = callback.data.replace("tm_", "")
-    
     selected = state.get("selected_times", [])
-    if t in selected:
-        selected.remove(t)
-    else:
-        selected.append(t)
-        
+    
+    if t in selected: selected.remove(t)
+    else: selected.append(t)
+    
     update_user_state(user_id, "selected_times", selected)
-    await show_step_4_times(callback.message, user_id, lang, edit=True)
+    await show_step_4_times(callback.message, user_id, state.get("lang", "uz_lot"), edit=True)
 
 @app.on_callback_query(filters.regex("save_all"))
-async def save_all_settings(client, callback):
+async def save_all_settings_callback_handler(client, callback):
     user_id = str(callback.from_user.id)
     state = get_user_state(user_id)
-    lang = state.get("lang", "uz_lot")
-    txt = TEXTS.get(lang, TEXTS["uz_lot"])
     
     settings = load_json(SETTINGS_FILE)
     settings[user_id] = {
-        "source_channel": state.get("source_channel"),
+        "source_channels": state.get("source_channels", []),
         "keywords": state.get("keywords", []),
         "target_chat": state.get("target_chat"),
         "times": state.get("selected_times", [])
     }
     save_json(SETTINGS_FILE, settings)
-    await callback.message.edit_text(txt["success"])
+    await callback.message.edit_text(TEXTS[state.get("lang", "uz_lot")]["success"])
 
-@app.on_message(filters.private & ~filters.command(["start", "help", "savol", "taklif", "privacy"]))
-async def handle_text_inputs(client, message):
+# =====================================================================
+# MATNLI INPUTLAR INTEGRATSIYASI (REPLY KEYBOARDS & STATES)
+# =====================================================================
+@app.on_message(filters.private & ~filters.command(["start"]))
+async def user_text_inputs_handler(client, message):
     user_id = str(message.from_user.id)
     state = get_user_state(user_id)
     lang = state.get("lang", "uz_lot")
-    txt = TEXTS.get(lang, TEXTS["uz_lot"])
+    txt = TEXTS[lang]
     text = message.text.strip()
     
-    if text == txt["menu_setup"]:
-        await show_main_menu(message, lang, edit=False)
-        return
-    elif text == txt["menu_question"]:
-        update_user_state(user_id, "expecting", "user_question")
-        await message.reply(txt["ask_question"])
-        return
-    elif text == txt["menu_suggestion"]:
-        update_user_state(user_id, "expecting", "user_suggestion")
-        await message.reply(txt["ask_suggestion"])
-        return
-    elif text == txt["menu_help"]:
-        await message.reply(txt["help_text"])
-        return
-    elif text == txt["menu_about"]:
-        await message.reply(txt["about_text"])
-        return
-    elif text == txt["menu_privacy"]:
-        await message.reply(txt["privacy_text"])
-        return
-    elif text == txt["menu_lang"]:
-        btn = InlineKeyboardMarkup([
-            [InlineKeyboardButton("🇺🇿 O'zbekcha (Lotin)", callback_data="lang_uz_lot")],
-            [InlineKeyboardButton("🇺🇿 Ўзбекча (Кирил)", callback_data="lang_uz_kir")],
-            [InlineKeyboardButton("🇷🇺 Русский", callback_data="lang_ru")],
-            [InlineKeyboardButton("🇬🇧 English", callback_data="lang_en")]
-        ])
-        await message.reply("🌐 **Muloqot tilini tanlang:**", reply_markup=btn)
-        return
+    # Menu Navigation
+    if text == txt["menu_setup"]: await show_main_menu(message, lang, edit=False); return
+    elif text == txt["menu_help"]: await message.reply(txt["help_text"]); return
+    elif text == txt["menu_about"]: await message.reply(txt["about_text"]); return
+    elif text == txt["menu_privacy"]: await message.reply(txt["privacy_text"]); return
 
     exp = state.get("expecting")
-    
     if exp == "source":
-        update_user_state(user_id, "source_channel", text)
+        channels = [ch.strip() for ch in text.split(",") if ch.strip()]
+        update_user_state(user_id, "source_channels", channels)
         update_user_state(user_id, "expecting", None)
-        msg = await message.reply("⚙️...")
-        await show_step_2_topics(msg, lang)
+        await show_step_2_topics(message, lang)
         
     elif exp == "target_chat":
         update_user_state(user_id, "target_chat", text)
@@ -599,47 +361,104 @@ async def handle_text_inputs(client, message):
         if times_found:
             selected = state.get("selected_times", [])
             for t in times_found:
-                if len(t) == 4 and t[1] == ':':
-                    t = '0' + t
-                if t not in selected:
-                    selected.append(t)
+                if len(t) == 4 and t[1] == ':': t = '0' + t
+                if t not in selected: selected.append(t)
             update_user_state(user_id, "selected_times", selected)
             update_user_state(user_id, "expecting", None)
-            await message.reply("✅ Vaqtlar muvaffaqiyatli qo'shildi!")
             await show_step_4_times(message, user_id, lang, edit=False)
         else:
             await message.reply(txt["invalid_time"])
 
-    elif exp in ["user_question", "user_suggestion"]:
-        feedbacks = load_json(FEEDBACK_FILE)
-        if user_id not in feedbacks: feedbacks[user_id] = []
-        feedbacks[user_id].append({"type": exp, "text": text, "time": time.strftime("%Y-%m-%d %H:%M:%S")})
-        save_json(FEEDBACK_FILE, feedbacks)
-        
-        update_user_state(user_id, "expecting", None)
-        await message.reply(txt["thanks_feedback"])
+# =====================================================================
+# PROFESSIONAL CRON ENGINE - MUKAMMAL MULTI-MEDIA PARSER TIZIMI
+# =====================================================================
+async def cron_checker():
+    settings = load_json(SETTINGS_FILE)
+    sent_posts = load_json(SENT_POSTS_FILE)
+    now = datetime.now().strftime("%H:%M")
+    
+    for user_id, config in settings.items():
+        if now in config.get("times", []):
+            target = config.get("target_chat")
+            sources = config.get("source_channels", [])
+            keywords = config.get("keywords", [])
+            
+            if not target or not sources: continue
+            
+            # Tasodifiy bitta manba kanalni tanlash (Multi-channel pooling)
+            source_channel = random.choice(sources).replace("@", "").strip()
+            logger.info(f"⏰ {now} | Pooling content from @{source_channel} to {target}")
+            
+            try:
+                valid_messages = []
+                async for msg in app.get_chat_history(source_channel, limit=150):
+                    # Smart text parsing (caption yoki oddiy text)
+                    msg_text = msg.text or msg.caption
+                    if not msg_text or len(msg_text) < 10: continue
+                    
+                    # Reklama filtri
+                    if any(word in msg_text.lower() for word in STOP_WORDS): continue
+                    
+                    # Kalit so'z filtri
+                    if keywords and not any(kw.lower() in msg_text.lower() for kw in keywords): continue
+                    
+                    # Duplikat tekshiruvi (Post ID yoki Matn unikalligi)
+                    post_hash = f"{source_channel}_{msg.id}"
+                    if post_hash in sent_posts.get(user_id, []): continue
+                    
+                    valid_messages.append(msg)
+                
+                if valid_messages:
+                    chosen_msg = random.choice(valid_messages)
+                    caption_text = chosen_msg.text or chosen_msg.caption
+                    
+                    formatted_text = (
+                        f"📖 **Ma'rifat Ulashuvchi Kontent**\n"
+                        f"┄┄┄┄┄┄┄┄┄┄┄┄┄┄┄┄┄┄┄┄┄┄┄┄┄\n\n"
+                        f"{caption_text}\n\n"
+                        f"┄┄┄┄┄┄┄┄┄┄┄┄┄┄┄┄┄┄┄┄┄┄┄┄┄\n"
+                        f"📚 **Iqro Ultra Premium System** 🕊️"
+                    )
+                    
+                    # SMART MEDIA DISTRIBUTION (Professional kopya qilish)
+                    if chosen_msg.photo:
+                        await app.send_photo(target, chosen_msg.photo.file_id, caption=formatted_text, parse_mode=ParseMode.MARKDOWN)
+                    elif chosen_msg.video:
+                        await app.send_video(target, chosen_msg.video.file_id, caption=formatted_text, parse_mode=ParseMode.MARKDOWN)
+                    elif chosen_msg.animation:
+                        await app.send_animation(target, chosen_msg.animation.file_id, caption=formatted_text, parse_mode=ParseMode.MARKDOWN)
+                    else:
+                        await app.send_message(target, formatted_text, parse_mode=ParseMode.MARKDOWN)
+                    
+                    # Duplikatlar bazasini yangilash
+                    if user_id not in sent_posts: sent_posts[user_id] = []
+                    sent_posts[user_id].append(f"{source_channel}_{chosen_msg.id}")
+                    save_json(SENT_POSTS_FILE, sent_posts)
+                    logger.info(f"✅ Post successfully deployed to {target}")
+                    
+            except errors.FloodWait as e:
+                await asyncio.sleep(e.value)
+            except Exception as e:
+                logger.error(f"Xatolik postingda: {e}")
 
-# 📡 Internal Web Server Render uchun
+# =====================================================================
+# SERVER & MAIN ENGINE
+# =====================================================================
 async def handle_render_port(reader, writer):
-    response = b"HTTP/1.1 200 OK\r\nContent-Length: 14\r\n\r\nPremium Active"
-    writer.write(response)
+    writer.write(b"HTTP/1.1 200 OK\r\nContent-Length: 13\r\n\r\nSystem_Online")
     await writer.drain()
     writer.close()
 
 async def main():
     port = int(os.environ.get("PORT", 10000))
-    try:
-        server = await asyncio.start_server(handle_render_port, '0.0.0.0', port)
-        print(f"📡 Premium Server Portda ochiq: {port}")
-    except Exception as e:
-        print(f"⚠️ Serverni ochishda xato (ehtimol port band): {e}")
+    try: await asyncio.start_server(handle_render_port, '0.0.0.0', port)
+    except Exception as e: logger.warning(f"Server port log: {e}")
 
     async with app:
         scheduler.add_job(cron_checker, "interval", minutes=1)
         scheduler.start()
-        print("🚀 IQRO PRO ULTRA PREMIUM bot/userbot ishga tushdi!")
+        logger.info("🚀 Professional Multi-Media Ultra Userbot successfully started!")
         await asyncio.Event().wait()
 
 if __name__ == "__main__":
-    loop = asyncio.get_event_loop()
-    loop.run_until_complete(main())
+    asyncio.run(main())
